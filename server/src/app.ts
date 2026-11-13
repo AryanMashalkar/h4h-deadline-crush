@@ -13,6 +13,7 @@ import { withTx } from './db.js';
 import { AppError, PG, notFound, pgCode } from './errors.js';
 import { EventHub, type DomainEvent } from './events.js';
 import { Metrics } from './metrics.js';
+import { reconcile } from './reconcile.js';
 import * as O from './services/organizer.js';
 import * as S from './services/submissions.js';
 import type { Storage } from './storage.js';
@@ -33,7 +34,16 @@ export interface AppDeps {
 
 export async function buildApp({ pool, hub, storage, limits: overrides }: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
+    logger:
+      config.logLevel === 'silent'
+        ? false
+        : {
+            level: config.logLevel,
+            // SSE passes the token in the query string; keep it out of logs.
+            serializers: {
+              req: (req: { method: string; url: string }) => ({ method: req.method, url: req.url.replace(/access_token=[^&]+/, 'access_token=[redacted]') }),
+            },
+          },
     trustProxy: true,
     bodyLimit: 64 * 1024 * 4, // part lists for 10,000 parts; file bytes never come here
     genReqId: () => randomUUID(),
@@ -59,8 +69,23 @@ export async function buildApp({ pool, hub, storage, limits: overrides }: AppDep
   app.addHook('onResponse', async (req, reply) => {
     metrics.observe(req.routeOptions.url ?? 'unknown', req.method, reply.statusCode, reply.elapsedTime);
   });
-  app.addHook('onSend', async (_req, reply) => {
-    reply.header('cache-control', 'no-store');
+  // Browsers talk to the bucket directly (part PUTs, previews), so it is the one extra origin allowed.
+  const bucketOrigin = new URL(config.s3.publicEndpoint).origin;
+  const csp = [
+    "default-src 'self'",
+    `connect-src 'self' ${bucketOrigin}`,
+    `img-src 'self' data: ${bucketOrigin}`,
+    "style-src 'self' https://fonts.googleapis.com",
+    'font-src https://fonts.gstatic.com',
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+  ].join('; ');
+  app.addHook('onSend', async (req, reply) => {
+    if (req.url.startsWith('/api/')) reply.header('cache-control', 'no-store');
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('referrer-policy', 'no-referrer');
+    reply.header('content-security-policy', csp);
   });
 
   app.setErrorHandler((err: Error, req, reply) => {
@@ -235,6 +260,11 @@ export async function buildApp({ pool, hub, storage, limits: overrides }: AppDep
         .type('text/csv; charset=utf-8')
         .header('content-disposition', `attachment; filename="submissions-${idParam(req)}.csv"`)
         .send(csv);
+    });
+    // "Nothing lost": match every version to its stored object (HEAD per object).
+    r.get('/api/hackathons/:id/reconcile', async (req) => {
+      await S.requireOrganizer(pool, me(req), idParam(req));
+      return reconcile(pool, storage, idParam(req));
     });
     r.patch('/api/hackathons/:id', async (req) => {
       await S.requireOrganizer(pool, me(req), idParam(req));

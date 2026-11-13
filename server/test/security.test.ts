@@ -65,6 +65,18 @@ describe('access control', () => {
   });
 });
 
+describe('headers', () => {
+  it('sends a CSP that only allows the bucket as an extra origin, and no-store on API responses', async () => {
+    const res = await fetch(`${h.baseUrl}/api/health`);
+    const csp = res.headers.get('content-security-policy')!;
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toMatch(/connect-src 'self' http:\/\/localhost:3900/);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+});
+
 describe('input validation', () => {
   it('rejects bad uploads before anything is created', async () => {
     const f = await fixture(h.pool);
@@ -95,7 +107,7 @@ describe('input validation', () => {
     const start = await call('POST', `/api/teams/${f.teamId}/uploads`, startBody({ size: file.length + 10 }));
     const signed = await call('POST', `/api/teams/${f.teamId}/uploads/${start.body.id}/parts`, { partNumbers: [1] });
     expect((await call('POST', `/api/teams/${f.teamId}/uploads/${start.body.id}/parts`, { partNumbers: [2] })).status).toBe(400);
-    const put = await fetch(signed.body.urls[0].url, { method: 'PUT', body: file });
+    const put = await fetch(signed.body.urls[0].url, { method: 'PUT', body: new Uint8Array(file) });
     const parts = [{ partNumber: 1, etag: put.headers.get('etag')! }];
     expect((await call('POST', `/api/teams/${f.teamId}/uploads/${start.body.id}/complete`, { parts: [...parts, { partNumber: 2, etag: 'x' }] })).status).toBe(400);
     const res = await call('POST', `/api/teams/${f.teamId}/uploads/${start.body.id}/complete`, { parts });

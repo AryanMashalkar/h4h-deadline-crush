@@ -1,0 +1,70 @@
+# One-command setup:  docker compose up --build
+# Then open http://localhost:3000 and press "Start a demo".
+# Services: Postgres (data + job queue), Garage (S3-compatible storage), the
+# API, and two separate workers, so you can kill one and watch the other
+# take over:   docker compose kill -s SIGKILL worker-1
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: crush
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 2s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  garage:
+    image: dxflrs/garage:v2.1.0
+    volumes:
+      - ./dev/garage.toml:/etc/garage.toml:ro
+      - garage:/var/lib/garage
+    ports:
+      - '3900:3900' # S3 API: browsers upload parts here directly
+
+  storage-init:
+    image: node:22-alpine
+    depends_on: [garage]
+    volumes:
+      - ./dev:/dev-scripts:ro
+    environment: &s3
+      GARAGE_ADMIN: http://garage:3903
+      GARAGE_ADMIN_TOKEN: dev-admin-token
+      S3_BUCKET: submissions
+      S3_ACCESS_KEY: GK0000000000000000000000dc
+      S3_SECRET_KEY: dc00000000000000000000000000000000000000000000000000000000000000
+    command: node /dev-scripts/garage-bootstrap.mjs
+
+  app:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+      storage-init: { condition: service_completed_successfully }
+    environment: &app
+      <<: *s3
+      DATABASE_URL: postgres://postgres:postgres@db:5432/crush
+      JWT_SECRET: ${JWT_SECRET:-local-compose-secret-change-me-0123456789}
+      S3_ENDPOINT: http://garage:3900
+      S3_PUBLIC_ENDPOINT: http://localhost:3900
+      S3_REGION: garage
+      WORKER_IN_PROCESS: 'false'
+    ports:
+      - '3000:3000'
+
+  worker-1: &worker
+    build: .
+    depends_on:
+      app: { condition: service_started }
+    environment: *app
+    command: ['node', 'dist/src/worker/main.js']
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  worker-2: *worker
+
+volumes:
+  pgdata:
+  garage:

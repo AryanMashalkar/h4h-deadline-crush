@@ -13,7 +13,8 @@
     "seed": "tsx scripts/seed.ts",
     "reconcile": "tsx scripts/reconcile.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "loadtest": "tsx scripts/loadtest.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1168.0",

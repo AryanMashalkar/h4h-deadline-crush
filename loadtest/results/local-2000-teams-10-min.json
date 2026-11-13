@@ -1,0 +1,92 @@
+{
+  "hackathonId": "2add96ac-aceb-45c2-b65f-e34d0d59533c",
+  "teams": 2000,
+  "windowSeconds": 596,
+  "fileBytes": 65556,
+  "onTimeTeams": 1960,
+  "completed": 1960,
+  "lateAttempts": 40,
+  "lateRefused": 40,
+  "lateAccepted": 0,
+  "maxInflight": 2,
+  "errors": {},
+  "nothingLost": {
+    "completedUploads": 1960,
+    "teamsWithCountedVersion": 1960,
+    "shaMatches": 1960,
+    "lost": 0,
+    "reconcile": {
+      "checkedAt": "2026-11-13T19:08:12.407Z",
+      "versionsWithFile": 2175,
+      "distinctObjects": 1960,
+      "objectsFound": 1960,
+      "missing": [],
+      "sizeMismatch": [],
+      "completedUploadsWithoutVersion": 0,
+      "versionsWithoutJob": 0,
+      "unfinishedJobs": 0,
+      "ok": true
+    },
+    "finalStats": {
+      "teamsSubmitted": 1960,
+      "counted": {
+        "accepted": 1960,
+        "checking": 0,
+        "needsFix": 0
+      },
+      "lateAttempts": 40,
+      "jobs": {
+        "queued": 0,
+        "running": 0,
+        "done": 2175,
+        "dead": 0,
+        "retried": 0
+      }
+    }
+  },
+  "api": {
+    "requests": 10095,
+    "p50": 3.5,
+    "p95": 11.7,
+    "p99": 14.4,
+    "max": 35.6
+  },
+  "endpoints": {
+    "GET submission": {
+      "n": 3960,
+      "p50": 2.6,
+      "p95": 4.4,
+      "p99": 6.9
+    },
+    "POST start upload": {
+      "n": 2000,
+      "p50": 8.2,
+      "p95": 11.6,
+      "p99": 14.6
+    },
+    "POST sign parts": {
+      "n": 1960,
+      "p50": 3,
+      "p95": 4.6,
+      "p99": 6.5
+    },
+    "storage PUT part (not API)": {
+      "n": 1960,
+      "p50": 4.3,
+      "p95": 6.4,
+      "p99": 9.4
+    },
+    "POST complete": {
+      "n": 1960,
+      "p50": 10.3,
+      "p95": 14,
+      "p99": 17.5
+    },
+    "POST save details": {
+      "n": 215,
+      "p50": 4.6,
+      "p95": 7.8,
+      "p99": 10.1
+    }
+  }
+}

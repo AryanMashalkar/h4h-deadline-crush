@@ -134,7 +134,7 @@ export async function uploadParts(call: ReturnType<typeof api>, teamId: string, 
   const parts = await Promise.all(
     signed.body.urls.map(async ({ partNumber, url }: { partNumber: number; url: string }) => {
       const chunk = file.subarray((partNumber - 1) * s.partSize, partNumber * s.partSize);
-      const res = await fetch(url, { method: 'PUT', body: chunk });
+      const res = await fetch(url, { method: 'PUT', body: new Uint8Array(chunk) });
       if (!res.ok) throw new Error(`part ${partNumber} PUT failed: ${res.status} ${await res.text()}`);
       return { partNumber, etag: res.headers.get('etag')! };
     }),

@@ -3,5 +3,8 @@ dist/
 coverage/
 .env
 *.log
-loadtest/results/*.json
 loadtest/tokens.json
+loadtest/results/ci-latest.json
+dev/.s3env
+dev/.loadenv
+test-results.xml
