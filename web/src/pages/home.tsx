@@ -4,7 +4,7 @@ import { post, tokens, type ApiError } from '../api';
 
 export function Home({ onSignedIn }: { onSignedIn: () => void }) {
   const navigate = useNavigate();
-  const [minutes, setMinutes] = useState(5);
+  const [minutes, setMinutes] = useState(30);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

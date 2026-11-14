@@ -157,6 +157,7 @@ export function OrganizerPage() {
         <div className="row">
           <button className="btn ghost" onClick={() => moveDeadline(1)}>In 1 minute</button>
           <button className="btn ghost" onClick={() => moveDeadline(5)}>In 5 minutes</button>
+          <button className="btn ghost" onClick={() => moveDeadline(30)}>In 30 minutes</button>
           <button className="btn ghost" onClick={() => moveDeadline(0)}>Now</button>
         </div>
       </details>
