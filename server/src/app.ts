@@ -73,6 +73,8 @@ export async function buildApp({ pool, hub, storage, limits: overrides }: AppDep
   const bucketOrigin = new URL(config.s3.publicEndpoint).origin;
   const csp = [
     "default-src 'self'",
+    // hash-wasm computes the SHA-256 in WebAssembly; this allows compiling it, not eval().
+    "script-src 'self' 'wasm-unsafe-eval'",
     `connect-src 'self' ${bucketOrigin}`,
     `img-src 'self' data: ${bucketOrigin}`,
     "style-src 'self' https://fonts.googleapis.com",

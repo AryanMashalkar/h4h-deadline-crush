@@ -71,6 +71,9 @@ describe('headers', () => {
     const csp = res.headers.get('content-security-policy')!;
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
+    // The browser hashes files with WebAssembly; without this every upload fails before it starts.
+    expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(csp).not.toContain("'unsafe-eval'");
     expect(csp).toMatch(/connect-src 'self' http:\/\/localhost:3900/);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
