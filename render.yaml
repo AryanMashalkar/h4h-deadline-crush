@@ -1,5 +1,6 @@
 # Render blueprint: one free web service (Docker; API + in-process worker + UI)
-# and one free Postgres, same region. Files live in Cloudflare R2 (S3 API).
+# and one free Postgres, same region. Files live in any S3-compatible bucket
+# (Backblaze B2 or Cloudflare R2).
 # Dashboard -> New -> Blueprint -> pick this repo, then fill in the S3_* values.
 services:
   - type: web
@@ -22,13 +23,14 @@ services:
       # https://<your-service>.onrender.com, used for the bucket's CORS rule
       - key: PUBLIC_URL
         sync: false
-      # Cloudflare R2: https://<account-id>.r2.cloudflarestorage.com
+      # Backblaze B2: https://s3.<region>.backblazeb2.com (e.g. us-east-005)
+      # Cloudflare R2: https://<account-id>.r2.cloudflarestorage.com, region auto
       - key: S3_ENDPOINT
         sync: false
       - key: S3_REGION
-        value: auto
+        sync: false
       - key: S3_BUCKET
-        value: deadline-crush
+        sync: false
       - key: S3_ACCESS_KEY
         sync: false
       - key: S3_SECRET_KEY

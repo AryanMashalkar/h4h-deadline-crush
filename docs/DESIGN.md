@@ -5,7 +5,7 @@
 ## 1. Upload flow
 
 ```
-browser                         API (never sees file bytes)                  bucket (R2 / Garage)
+browser                         API (never sees file bytes)                  bucket (B2 / R2 / Garage)
 1 SHA-256 the file locally
 2 POST /uploads {size, sha256,  ── stamp started_at = DB clock, check window,
   title, links, clientKey}         capture details, CreateMultipartUpload ──▶
@@ -66,7 +66,7 @@ JWT auth; team pages, files and events are visible only to members (a non-member
 
 * **Postgres as the queue** instead of Redis/BullMQ: one less service on a free tier, transactional enqueue, and the fence lives next to the data. Cost: polling (`SKIP LOCKED` on a partial index, 500 ms); at much larger scale I would add `LISTEN` wake-ups or move to a dedicated queue.
 * **Worker in the API process** on the free tier (one instance). It can run separately (`npm run start:worker`, two in Docker Compose); the design does not change.
-* **The load test uses 64 KB files**, not 100 MB: 2,000 × 100 MB is 200 GB, 20× the R2 free tier. Because bytes never touch the API, API latency does not depend on file size; the 100 MB path is shown separately in the browser and in tests with multi-part files.
+* **The load test uses 64 KB files**, not 100 MB: 2,000 × 100 MB is 200 GB, 20× a 10 GB free storage tier. Because bytes never touch the API, API latency does not depend on file size; the 100 MB path is shown separately in the browser and in tests with multi-part files.
 * **Hashing in the browser** costs ~1 s per 100 MB before the upload starts. It is what makes grace fair, so I kept it.
 * **Rate limits and SSE fan-out are per instance.** Events go through `pg_notify`, so more instances work; limits would move to Redis.
 

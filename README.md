@@ -59,7 +59,7 @@ web/src/upload.ts                    resumable browser uploader
 | Variable | Default | |
 |---|---|---|
 | `DATABASE_URL` | local | Postgres 16 |
-| `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Garage on :3900 | Any S3-compatible store (Cloudflare R2 in production) |
+| `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Garage on :3900 | Any S3-compatible store (Backblaze B2 or Cloudflare R2 in production) |
 | `S3_PUBLIC_ENDPOINT` | `S3_ENDPOINT` | Host browsers use for signed URLs, if different |
 | `PUBLIC_URL` | | Site origin, used for the bucket CORS rule set at boot |
 | `JWT_SECRET` | dev only | 32+ characters in production |
