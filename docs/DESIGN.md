@@ -4,17 +4,29 @@
 
 ## 1. Upload flow
 
-```
-browser                         API (never sees file bytes)                  bucket (B2 / R2 / Garage)
-1 SHA-256 the file locally
-2 POST /uploads {size, sha256,  ── stamp started_at = DB clock, check window,
-  title, links, clientKey}         capture details, CreateMultipartUpload ──▶
-3 POST /parts [1..16]           ── sign UploadPart URLs (≤10 min, never past
-                                   deadline + grace)
-4 PUT part n ─────────────────────────────────────────────────────────────▶  stores part, returns ETag
-5 POST /complete {parts}        ── CompleteMultipartUpload, HEAD size check, then ONE transaction:
-                                   version row + job row + session=completed + NOTIFY
-6 SSE: version.created → version.checked (accepted / needs_fix / rejected)
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as API (Fastify)
+    participant P as Postgres
+    participant S as Bucket (B2 / R2)
+    participant W as Worker
+    Note over B: file chosen: SHA-256 starts at once
+    B->>A: POST /uploads {size, sha256, details}
+    A->>P: submission_window('start') on the DB clock
+    A->>S: CreateMultipartUpload
+    A-->>B: session + signed part URLs (<= 10 min, never past deadline + grace)
+    B->>S: PUT 10 MiB parts directly, 4 in parallel, retried
+    B->>A: POST /complete {part ETags}
+    A->>P: submission_window('transfer'), started before the deadline?
+    A->>S: CompleteMultipartUpload + HEAD size check
+    A->>P: ONE transaction: version + job (outbox) + pg_notify
+    P-->>B: NOTIFY → API → SSE: version.created
+    W->>P: claim job (SKIP LOCKED, new lease_token)
+    W->>S: stream object, recompute SHA-256, run checks
+    W->>P: fenced commit (WHERE lease_token = mine) + pg_notify
+    P-->>B: NOTIFY → API → SSE: accepted / needs a fix / rejected
 ```
 
 * **Resumable:** fixed 10 MiB parts, 4 in flight, each retried with backoff; the browser waits for `online` when the network drops. Part ETags are saved in `localStorage`, and `GET /parts` lists what the bucket already holds, so after a reload the user re-selects the file and only missing parts are sent.
@@ -40,6 +52,22 @@ All times are the **database clock** (`clock_timestamp()`); the browser's clock 
 ## 3. Exactly-once checks
 
 No queue can promise exactly-once *delivery* when a worker can die at any instant, so this system promises exactly-once **effect**: a job may run twice, its result is recorded once.
+
+```mermaid
+sequenceDiagram
+    participant A as Worker A
+    participant P as Postgres (jobs)
+    participant B as Worker B
+    A->>P: claim job 7, lease_token = t1, expires in 30 s
+    A->>A: running checks
+    Note over A: SIGKILL (or hangs past its lease)
+    Note over P: lease expires: job 7 claimable again
+    B->>P: claim job 7, lease_token = t2 (attempt 2)
+    B->>P: COMMIT results WHERE id = 7 AND lease_token = t2
+    P-->>B: 1 row: results written once
+    A-->>P: (zombie wakes) COMMIT WHERE lease_token = t1
+    P-->>A: 0 rows: whole transaction rolls back
+```
 
 1. **Transactional outbox.** The job row is inserted in the same transaction as the version, so there is never a version without a job or the reverse.
 2. **Claim with a lease.** `UPDATE jobs … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)` takes the oldest queued job, or a running job whose lease expired. Each claim gets a fresh `lease_token`. Workers heartbeat every lease/3.
