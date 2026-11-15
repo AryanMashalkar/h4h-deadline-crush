@@ -19,6 +19,8 @@ browser                         API (never sees file bytes)                  buc
 
 * **Resumable:** fixed 10 MiB parts, 4 in flight, each retried with backoff; the browser waits for `online` when the network drops. Part ETags are saved in `localStorage`, and `GET /parts` lists what the bucket already holds, so after a reload the user re-selects the file and only missing parts are sent.
 * **Idempotent:** `clientKey` = hash of the file, so "start" twice returns the same session (unique `(team_id, client_key)`). "Complete" locks the session row; a second call returns the same version. If storage completed but our commit was lost, the retry finds the object with `HEAD` and carries on.
+* **Hashing never eats into the deadline:** the SHA-256 is computed the moment a file is chosen (streamed in 8 MiB slices through WebAssembly, so memory stays flat even on phones), not when *Upload* is pressed. 100 MB takes ~0.9 s in desktop Chromium; a team that clicks with seconds left only waits for one API call. Web Crypto's `digest()` would need the whole file in memory at once, which is why it is not used.
+* **CORS for direct uploads:** at boot the app sets the bucket's CORS rule itself (`PUT/GET/HEAD` from `PUBLIC_URL`, `ExposeHeaders: ETag`); without the exposed `ETag` the browser could not report part ETags. Verified live on Backblaze B2.
 * The multipart ETag is not a content hash, so the worker computes SHA-256 itself while streaming the object; that hash is the receipt.
 
 ## 2. Deadline and grace policy
@@ -67,7 +69,8 @@ JWT auth; team pages, files and events are visible only to members (a non-member
 * **Postgres as the queue** instead of Redis/BullMQ: one less service on a free tier, transactional enqueue, and the fence lives next to the data. Cost: polling (`SKIP LOCKED` on a partial index, 500 ms); at much larger scale I would add `LISTEN` wake-ups or move to a dedicated queue.
 * **Worker in the API process** on the free tier (one instance). It can run separately (`npm run start:worker`, two in Docker Compose); the design does not change.
 * **The load test uses 64 KB files**, not 100 MB: 2,000 × 100 MB is 200 GB, 20× a 10 GB free storage tier. Because bytes never touch the API, API latency does not depend on file size; the 100 MB path is shown separately in the browser and in tests with multi-part files.
-* **Hashing in the browser** costs ~1 s per 100 MB before the upload starts. It is what makes grace fair, so I kept it.
+* **Hashing in the browser** costs ~1 s per 100 MB, done in the background as soon as the file is chosen. It is what makes grace fair, so I kept it.
+* **Database connections on a free tier:** one pool of 10 (`DB_POOL_SIZE`) for API + worker, plus exactly one dedicated connection that `LISTEN`s for events and fans them out to every SSE client in memory. SSE clients never hold a database connection, so 2,000 open status pages still use 11 connections. The `LISTEN` client is never from a pool and must not go through a transaction-mode PgBouncer; it reconnects with backoff if dropped.
 * **Rate limits and SSE fan-out are per instance.** Events go through `pg_notify`, so more instances work; limits would move to Redis.
 
 ## With one more week

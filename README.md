@@ -4,7 +4,7 @@
 
 Built for the Hack4Hack Crew Hiring Challenge 2026, problem statement 2.
 
-* **Live:** _URL added after deploy_. Press **Start a demo**: you get a private hackathon whose deadline is a few minutes away, a team, and its organizer dashboard.
+* **Live:** https://deadline-crush.onrender.com (free tier: the first request after 15 idle minutes takes about 50 s while the instance wakes). Press **Start a demo**: you get a private hackathon whose deadline is 30 minutes away (or 2, 5, 10), movable from the organizer view, a team, and its organizer dashboard.
 * **Design doc (1 page):** [docs/DESIGN.md](docs/DESIGN.md): upload flow, deadline and grace policy, how jobs stay exactly-once, trade-offs.
 * **Load test report:** [loadtest/README.md](loadtest/README.md)
 

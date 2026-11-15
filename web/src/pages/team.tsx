@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { del, get, post, type ApiError, type Submission, type Version } from '../api';
 import { bytes, CHECK_LABEL, clock, STATUS_LABEL, when, whenMs } from '../format';
 import { useLive, useServerClock } from '../live';
-import { Upload, type Progress } from '../upload';
+import { prehash, Upload, type Progress } from '../upload';
 
 export function TeamPage() {
   const { id } = useParams<{ id: string }>();
@@ -130,6 +130,7 @@ function SubmitForm({ sub, now, deadline, onDone }: { sub: Submission; now: numb
   const [description, setDescription] = useState(latest?.description ?? '');
   const [links, setLinks] = useState((latest?.links ?? []).join('\n'));
   const [file, setFile] = useState<File | null>(null);
+  const [hashed, setHashed] = useState(0);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -151,6 +152,8 @@ function SubmitForm({ sub, now, deadline, onDone }: { sub: Submission; now: numb
     }
     setMessage(null);
     setFile(f);
+    setHashed(0);
+    prehash(f, setHashed).catch(() => setHashed(-1));
   }
 
   async function runUpload(u: Upload) {
@@ -219,7 +222,9 @@ function SubmitForm({ sub, now, deadline, onDone }: { sub: Submission; now: numb
         <label className="drop-label">
           <span>{file ? <strong>{file.name}</strong> : 'Project file'}</span>
           <span className="muted small">
-            {file ? bytes(file.size) : `PDF, ZIP, PNG, JPEG, MP4 or WebM, up to ${bytes(sub.maxFileBytes)}. Drop it here or choose.`}
+            {file
+              ? `${bytes(file.size)} · ${hashed < 0 ? 'fingerprint failed, it will retry on upload' : hashed < 1 ? `fingerprinting ${Math.round(hashed * 100)}%` : 'fingerprint ready (SHA-256)'}`
+              : `PDF, ZIP, PNG, JPEG, MP4 or WebM, up to ${bytes(sub.maxFileBytes)}. Drop it here or choose.`}
           </span>
           <input ref={fileInput} type="file" onChange={(e) => pick(e.target.files?.[0])} disabled={busy} />
         </label>

@@ -69,6 +69,20 @@ export async function sha256OfFile(file: File, onProgress: (f: number) => void, 
   return hasher.digest('hex');
 }
 
+// Hashing starts the moment a file is chosen, not when "Upload" is pressed, so a
+// team clicking with seconds left only waits for the server call: the hash that
+// fixes the content before the deadline is usually ready already.
+const prehashed = new WeakMap<File, Promise<string>>();
+export function prehash(file: File, onProgress: (f: number) => void = () => {}): Promise<string> {
+  let p = prehashed.get(file);
+  if (!p) {
+    p = sha256OfFile(file, onProgress, new AbortController().signal);
+    prehashed.set(file, p);
+    p.catch(() => prehashed.delete(file));
+  }
+  return p;
+}
+
 function putPart(url: string, blob: Blob, signal: AbortSignal, onBytes: (n: number) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -123,7 +137,8 @@ export class Upload {
     try {
       if (!this.sha) {
         this.emit({ phase: 'hashing' });
-        this.sha = await sha256OfFile(this.file, (hashed) => this.emit({ hashed }), signal);
+        this.sha = await prehash(this.file, (hashed) => this.emit({ hashed }));
+        if (signal.aborted) throw new DOMException('aborted', 'AbortError');
         // Same file after a reload -> same clientKey -> same server session (resume).
         // A finished upload clears this, so submitting the same file again later is a new version.
         this.storeKey = `${this.teamId}.${this.sha}`;

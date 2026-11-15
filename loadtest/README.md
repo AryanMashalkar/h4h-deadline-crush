@@ -35,7 +35,7 @@
 | POST complete | 1960 | 10.3 | 14 | 17.5 |
 | POST save details | 215 | 4.6 | 7.8 | 10.1 |
 
-Run on one machine (4 vCPU): API with in-process worker (2 concurrent jobs), Postgres 16, Garage as the bucket, and the load generator. CI reruns a compressed version (500 teams in 2 minutes) on every push and uploads the report as an artifact.
+Run on one machine (4 vCPU): API with in-process worker (2 concurrent jobs), Postgres 16, Garage as the bucket, and the load generator. In production the app runs on Render's free tier with Backblaze B2 storage (https://deadline-crush.onrender.com); a live upload there is verified end to end (accepted, receipt, preview). The full run was kept local because B2's free tier caps daily download/HEAD calls below what 2,000 reconciled teams need. CI reruns a compressed version (500 teams in 2 minutes) on every push and uploads the report as an artifact.
 
 ## Why 64 KB files and not 100 MB
 
