@@ -41,6 +41,7 @@ export const CHECK_LABEL: Record<string, string> = {
   integrity: 'Bytes match the hash you declared',
   file_type: 'File type (by content)',
   archive: 'Archive safety',
+  malware: 'Virus & executable signature scan',
   preview: 'Preview',
   links: 'Links respond',
 };

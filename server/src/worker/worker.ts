@@ -9,10 +9,12 @@ import { fileTypeFromFile } from 'file-type';
 import type pg from 'pg';
 import pino from 'pino';
 import { inspectZip } from '../checks/archive.js';
+import { scanFile } from '../checks/malware.js';
+import { sendPendingReceipts } from '../mailer.js';
 import { checkLink } from '../checks/links.js';
 import { renderPdfFirstPage } from '../checks/preview.js';
 import { config } from '../config.js';
-import { withTx } from '../db.js';
+import { withTx, type Tx } from '../db.js';
 import { publish } from '../events.js';
 import type { Storage } from '../storage.js';
 import { claim, completeFenced, failJob, heartbeat, LeaseLost, type Job } from './queue.js';
@@ -145,6 +147,14 @@ export async function runChecks(
         if (z.readme) out.previewText = z.readme.text;
       }
 
+      // 4b. Signature scan: EICAR test virus and executable programs, in the file or inside a ZIP.
+      const scan = await scanFile(file, { isZip: ft?.mime === 'application/zip' && !out.results.some((r) => r.name === 'archive' && !r.ok) });
+      out.results.push({ name: 'malware', ok: scan.ok, detail: { findings: scan.findings.slice(0, 20), entriesScanned: scan.entriesScanned } });
+      if (!scan.ok) {
+        out.status = 'rejected';
+        out.reason = `Rejected by the virus/malware signature scan: ${scan.reason}`;
+      }
+
       // 5. PDF: render page 1. Deterministic key, so a retried job overwrites, never duplicates.
       if (ft?.mime === 'application/pdf') {
         const png = await renderPdfFirstPage(file, dir);
@@ -200,9 +210,48 @@ export async function commitOutcome(pool: pg.Pool, job: Job, outcome: CheckOutco
     ).rows[0];
     if (outcome.status === 'accepted' && outcome.sha256) {
       await tx.query('INSERT INTO receipts (version_id, sha256, size) VALUES ($1, $2, $3)', [job.version_id, outcome.sha256, outcome.size]);
+      await queueReceiptEmail(tx, job.version_id);
     }
     await publish(tx, { type: 'version.checked', hackathonId: v.hackathon_id, teamId: v.team_id, versionId: job.version_id, status: outcome.status });
   });
+}
+
+/**
+ * Emailed receipt, outbox style: the message is written in the same
+ * transaction as the receipt and delivered later by a sender that marks
+ * sent_at, keyed by idempotency_key, so a retry never emails twice.
+ */
+async function queueReceiptEmail(tx: Tx, versionId: string) {
+  const { rows } = await tx.query(
+    `SELECT v.version_no, v.title, v.file_name, r.sha256, r.size, r.issued_at, t.name AS team, h.name AS hackathon,
+            h.deadline, v.effective_at,
+            ARRAY(SELECT u.email FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = t.id ORDER BY u.email) AS emails
+       FROM versions v JOIN receipts r ON r.version_id = v.id JOIN teams t ON t.id = v.team_id JOIN hackathons h ON h.id = v.hackathon_id
+      WHERE v.id = $1`,
+    [versionId],
+  );
+  const r = rows[0];
+  if (!r) return;
+  const body = [
+    `Your submission to ${r.hackathon} was received and checked.`,
+    '',
+    `Team:        ${r.team}`,
+    `Version:     ${r.version_no} (${r.title})`,
+    `File:        ${r.file_name} (${r.size} bytes)`,
+    `SHA-256:     ${r.sha256}`,
+    `Submitted:   ${new Date(r.effective_at).toISOString()} (server clock)`,
+    `Deadline:    ${new Date(r.deadline).toISOString()}`,
+    `Receipt ID:  ${versionId}`,
+    '',
+    'The SHA-256 above was computed by our worker from the bytes in storage and',
+    'matches the hash your browser declared before uploading. Keep this email:',
+    'it proves exactly which file you submitted and when.',
+  ].join('\r\n');
+  await tx.query(
+    `INSERT INTO email_outbox (version_id, idempotency_key, to_addresses, subject, body)
+     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (version_id) DO NOTHING`,
+    [versionId, `receipt-${versionId}`, r.emails, `Receipt: ${r.hackathon}, version ${r.version_no} (SHA-256 ${r.sha256.slice(0, 12)}…)`, body],
+  );
 }
 
 export interface WorkerOptions {
@@ -231,7 +280,10 @@ export class Worker {
   start() {
     this.running = true;
     for (let i = 0; i < (this.o.concurrency ?? config.worker.concurrency); i++) this.loops.push(this.loop());
-    this.maintenance = setInterval(() => void expireUploads(this.o.pool, this.o.storage).catch(() => {}), 30_000);
+    this.maintenance = setInterval(() => {
+      void expireUploads(this.o.pool, this.o.storage).catch(() => {});
+      void sendPendingReceipts(this.o.pool).catch((err) => this.log.warn({ err }, 'receipt email delivery failed'));
+    }, 30_000);
     this.maintenance.unref();
   }
 
@@ -264,6 +316,13 @@ export class Worker {
       await this.giveUp(job, 'too many attempts (the worker kept dying on this job)');
       return;
     }
+    // Demo fault injection ("crash the worker"): this attempt stops heartbeating, so it
+    // loses its lease; another worker takes the job over; then this one wakes up
+    // and tries to commit. The fence must refuse it.
+    if (job.attempts === 1 && (await this.takeChaos(job))) {
+      await this.zombie(job, lease, log);
+      return;
+    }
     const ac = new AbortController();
     const beat = setInterval(async () => {
       if (faultState.heartbeatsPaused) return;
@@ -286,6 +345,44 @@ export class Worker {
       if (res === 'dead') await this.markVersionError(job);
     } finally {
       clearInterval(beat);
+    }
+  }
+
+  private async takeChaos(job: Job): Promise<boolean> {
+    const { rows } = await this.o.pool.query(
+      `UPDATE hackathons h SET chaos_pending = false FROM versions v
+        WHERE v.id = $1 AND h.id = v.hackathon_id AND h.chaos_pending RETURNING h.id AS hackathon_id, v.team_id`,
+      [job.version_id],
+    );
+    if (!rows[0]) return false;
+    await publish(this.o.pool, { type: 'job.fault', hackathonId: rows[0].hackathon_id, teamId: rows[0].team_id, versionId: job.version_id, status: 'frozen' });
+    return true;
+  }
+
+  private async zombie(job: Job, lease: number, log: pino.Logger) {
+    log.warn('fault injection: this attempt freezes (no heartbeats) and will try to commit late');
+    const outcome = await runChecks(this.o.pool, this.o.storage, job.version_id, log, new AbortController().signal);
+    // Wait until another worker has taken the job over (attempt 2), as a frozen process would.
+    const until = Date.now() + (lease * 3 + 30) * 1000;
+    while (Date.now() < until && this.running) {
+      const { rows } = await this.o.pool.query('SELECT attempts, status FROM jobs WHERE id = $1', [job.id]);
+      if (!rows[0] || rows[0].attempts > job.attempts || rows[0].status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    try {
+      await commitOutcome(this.o.pool, job, outcome);
+      log.error('fault injection: the late commit was NOT fenced');
+    } catch (err) {
+      if (!(err instanceof LeaseLost)) throw err;
+      const { rows } = await this.o.pool.query(
+        `UPDATE jobs j SET fenced_out = fenced_out + 1 FROM versions v WHERE j.id = $1 AND v.id = j.version_id
+         RETURNING v.hackathon_id, v.team_id, v.status`,
+        [job.id],
+      );
+      log.warn('fault injection: late commit refused by the lease fence (zombie write discarded)');
+      if (rows[0]) {
+        await publish(this.o.pool, { type: 'job.fenced', hackathonId: rows[0].hackathon_id, teamId: rows[0].team_id, versionId: job.version_id, status: rows[0].status });
+      }
     }
   }
 

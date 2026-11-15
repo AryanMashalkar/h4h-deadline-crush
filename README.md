@@ -15,15 +15,25 @@ Built for the Hack4Hack Crew Hiring Challenge 2026, problem statement 2.
 | Files up to 100 MB go straight to storage, resumable | S3 multipart with presigned part URLs (10 MiB parts). The API never streams a byte. Parts retry, uploads pause while offline, and resume after a reload | `test/upload.test.ts`, browser flow |
 | Deadline on the server clock, written grace policy | One SQL function, `submission_window()`, on the DB clock. Uploads started before the deadline may finish within the grace period; the SHA-256 is declared before the deadline so grace buys transfer time, not work time | `test/deadline.test.ts` (µs boundaries) |
 | Every version kept, last one before the deadline counts | Append-only `versions`, gap-free numbers from an atomic counter, `counted_versions` view | `test/deadline.test.ts` |
-| Background checks | Postgres job queue (`SKIP LOCKED` + leases); type by magic bytes; zip-bomb and zip-slip limits without extracting; link checks with SSRF protection; PDF page-1 preview; README preview from ZIPs | `test/checks.test.ts` |
+| Background checks | Postgres job queue (`SKIP LOCKED` + leases); type by magic bytes; zip-bomb and zip-slip limits without extracting; link checks with SSRF protection; a virus/executable signature scan (EICAR test signature, Windows/Linux/macOS program headers, also inside ZIPs); PDF page-1 preview; README preview from ZIPs | `test/checks.test.ts`, `test/malware-receipts-chaos.test.ts` |
 | Live status | Server-sent events fed by `pg_notify` inside each transaction: uploading → checking → accepted / needs a fix | `test/organizer.test.ts` |
-| Exactly once | Transactional outbox + fenced commit (lease token) + unique keys | `test/exactly-once.test.ts` kills real worker processes with SIGKILL |
+| Exactly once | Transactional outbox + fenced commit (lease token) + unique keys | `test/exactly-once.test.ts` kills real worker processes with SIGKILL; on a demo, **💥 Simulate worker crash mid-check** on the organizer page does it live |
 | Secure | JWT; members-only teams, files and events; short-lived signed URLs; zod on every input; rate limits | `test/security.test.ts` |
 | Organizer dashboard | Live counts of submissions, late attempts, failed checks, queue health; CSV export; per-minute chart | `test/organizer.test.ts` |
 | Load test | 2,000 teams in 10 minutes, open model, back-loaded; then a nothing-lost reconciliation (DB ↔ bucket, plus per-team SHA-256 match) | `loadtest/` |
-| CI | 40+ tests including the kill tests, a compressed load test and a Docker build on every push | `.github/workflows/ci.yml` |
+| CI | 50+ tests including the kill tests, a compressed load test and a Docker build on every push | `.github/workflows/ci.yml` |
 
-Bonus: SHA-256 receipt per accepted file, uploads that resume after going offline or reloading, a "nothing lost" check organizers can run (`GET /api/hackathons/:id/reconcile`).
+Bonus:
+
+| Extra | How |
+|---|---|
+| SHA-256 receipt per accepted file | Computed by the worker from the stored bytes; must equal the hash the browser declared |
+| Emailed receipt | An `email_outbox` row written in the same transaction as the receipt, keyed `receipt-<version>`. **✉ View emailed receipt (.eml)** downloads the exact RFC 5322 message. Delivery goes through Resend when `RESEND_API_KEY` is set (idempotency key per row, `SKIP LOCKED`); without it, nothing is sent and the outbox and .eml are what you see. Demo accounts use `.invalid` addresses and are never mailed |
+| Fault injection | Demo hackathons only: the next check freezes with no heartbeat, loses its 30 s lease, attempt 2 takes over, and the frozen attempt's late write is refused by the fence. The organizer page shows *Jobs retried* and *stale writes fenced out* change live |
+| Offline resume | Uploads pause when the network drops and continue from the next missing part, also after a reload |
+| Nothing lost | Organizers can match every version to its stored object (`GET /api/hackathons/:id/reconcile`) |
+
+The malware check is a **signature scan, not an antivirus engine**: it catches the EICAR test file and compiled programs (renamed or zipped), not unknown malware. A ClamAV check would plug in the same way on a bigger worker.
 
 ## Run it
 
@@ -64,4 +74,5 @@ web/src/upload.ts                    resumable browser uploader
 | `PUBLIC_URL` | | Site origin, used for the bucket CORS rule set at boot |
 | `JWT_SECRET` | dev only | 32+ characters in production |
 | `WORKER_IN_PROCESS` | `true` | `false` to run workers separately (`npm run start:worker`) |
+| `RESEND_API_KEY`, `MAIL_FROM` | unset | Optional: deliver receipt emails through Resend. Unset, receipts stay in the outbox |
 | `PART_URL_TTL_SECONDS` | `600` | Part URLs also never outlive deadline + grace |

@@ -11,7 +11,8 @@ export const CHANNEL = 'crush_events';
 export type DomainEvent =
   | { type: 'upload.started' | 'upload.completed' | 'upload.aborted'; hackathonId: string; teamId: string; uploadId: string }
   | { type: 'version.created' | 'version.checked'; hackathonId: string; teamId: string; versionId: string; status: string }
-  | { type: 'late.attempt'; hackathonId: string; teamId: string | null };
+  | { type: 'late.attempt'; hackathonId: string; teamId: string | null }
+  | { type: 'job.fault' | 'job.fenced'; hackathonId: string; teamId: string; versionId: string; status: string };
 
 export async function publish(tx: Tx | pg.Pool, event: DomainEvent): Promise<void> {
   await tx.query('SELECT pg_notify($1, $2)', [CHANNEL, JSON.stringify(event)]);

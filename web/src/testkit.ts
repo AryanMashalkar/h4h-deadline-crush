@@ -40,6 +40,16 @@ export function disguisedPdf(): File {
   return new File([text], 'definitely-a-report.pdf', { type: 'application/pdf' });
 }
 
+/**
+ * A real PDF carrying the EICAR antivirus test signature (harmless by design,
+ * used to test scanners). Assembled here so the site's bundle is not flagged.
+ */
+export function eicarPdf(): File {
+  const sig = ['X5O!P%@AP[4\\PZX54(P^)7CC)7}$', 'EICAR-STANDARD-', 'ANTIVIRUS-TEST-FILE!$H+H*'].join('');
+  const body = `%PDF-1.4\n% Deadline Crush test kit: antivirus test file\n${sig}\n%%EOF\n`;
+  return new File([body], 'eicar-test.pdf', { type: 'application/pdf' });
+}
+
 /** A 300 KB ZIP whose entry claims 300 MB (ratio ~1029:1). Never extracted by the server. */
 export async function zipBomb(): Promise<File> {
   const res = await fetch('/test-kit/zip-bomb.zip');

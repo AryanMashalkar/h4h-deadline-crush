@@ -73,15 +73,16 @@ sequenceDiagram
 2. **Claim with a lease.** `UPDATE jobs … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)` takes the oldest queued job, or a running job whose lease expired. Each claim gets a fresh `lease_token`. Workers heartbeat every lease/3.
 3. **Fenced commit.** All results go in one transaction that starts with `UPDATE jobs SET status='done' WHERE id=$1 AND lease_token=$2 AND status='running'`. If a worker hung, lost its lease and another worker finished the job, this matches 0 rows and the whole transaction rolls back: the zombie writes nothing.
 4. **Second guard:** `check_results` has primary key `(version_id, check_name)` and `receipts` has `version_id`, so even a bug in step 3 cannot produce a duplicate row.
-5. Side effects outside Postgres are idempotent by key: the preview PNG is written to `previews/<version>.png`, so a re-run overwrites the same object.
+5. Side effects outside Postgres are idempotent by key: the preview PNG is written to `previews/<version>.png`, so a re-run overwrites the same object. The receipt email is an `email_outbox` row in the fenced transaction (unique per version), sent later with its idempotency key, so a retried job never emails twice.
 
-**Proof** (`test/exactly-once.test.ts`, real worker processes): a worker that `SIGKILL`s itself just before committing is retried by a second worker (attempts = 2, one result set); a worker that hangs past its lease and wakes up after another worker committed is fenced out; and a **kill storm** runs 15 jobs while workers are `SIGKILL`ed at random 12 times, then checks every version has exactly one result set from exactly one attempt. A typical run: 9 of 15 jobs ran more than once, 0 duplicates. The same demo works by hand: `docker compose kill -s SIGKILL worker-1`.
+**Proof** (`test/exactly-once.test.ts`, real worker processes): a worker that `SIGKILL`s itself just before committing is retried by a second worker (attempts = 2, one result set); a worker that hangs past its lease and wakes up after another worker committed is fenced out; and a **kill storm** runs 15 jobs while workers are `SIGKILL`ed at random 12 times, then checks every version has exactly one result set from exactly one attempt. A typical run: 9 of 15 jobs ran more than once, 0 duplicates. The same demo works by hand: `docker compose kill -s SIGKILL worker-1`, or on a live demo with **Simulate worker crash mid-check**, which counts the refused zombie commit in `jobs.fenced_out`.
 
 ## 4. Checks (and their own safety)
 
 * **Type by content**, never by extension (`file-type` magic bytes); allowed: PDF, ZIP, PNG, JPEG, MP4, WebM.
 * **Zip bombs:** only the central directory is read; the archive is never extracted. Limits: 10,000 entries, 1 GiB total declared size, 100:1 ratio per entry over 1 MiB; `../` and absolute paths are refused. Only the top-most README is inflated, capped at 64 KB, and `yauzl` verifies actual inflated sizes against the headers.
 * **Links (SSRF):** http/https on ports 80/443 only, no credentials, at most 3 redirects with every hop re-checked. Every resolved address must be public unicast (no loopback, RFC 1918, link-local such as `169.254.169.254`, CGNAT, IPv4-mapped IPv6…), and the connection is made to the address that was checked (custom DNS lookup), so DNS rebinding does not help.
+* **Virus / executable signatures:** the whole file is streamed once for the EICAR test signature; the first bytes are checked for PE/MZ, ELF and Mach-O headers. In ZIPs, every entry (up to 2,000 entries, 1 MiB each, 16 MiB in total, inflated with the same size checks) is checked the same way, and Windows launchers (`.exe`, `.dll`, `.scr`, `.msi`, `.vbs`…) are refused by name; scripts such as `.sh` or `.bat` are allowed because real repos have them. A hit rejects the version, so it never counts and gets no receipt.
 * **PDF preview:** `pdftoppm` renders page 1 in a child process with a 20 s kill timeout, so a hostile PDF can only hurt that process.
 
 ## 5. Nothing lost: proof under load
@@ -103,4 +104,4 @@ JWT auth; team pages, files and events are visible only to members (a non-member
 
 ## With one more week
 
-Emailed receipts (an outbox row in the same transaction, sent with an idempotency key); ClamAV as one more pluggable check on a bigger worker; a status page; property-based tests that interleave uploads, edits and the deadline at random; a full-size 100 MB data-plane run on paid storage; Playwright tests for offline resume.
+ClamAV as one more pluggable check on a bigger worker, next to the signature scan; a status page; property-based tests that interleave uploads, edits and the deadline at random; a full-size 100 MB data-plane run on paid storage; Playwright tests for offline resume.

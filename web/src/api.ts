@@ -82,6 +82,17 @@ export const post = <T>(p: string, b: unknown = {}) => request<T>('POST', p, b);
 export const patch = <T>(p: string, b: unknown) => request<T>('PATCH', p, b);
 export const del = <T>(p: string) => request<T>('DELETE', p);
 
+/** Authenticated download of a non-JSON response (CSV, .eml) as a file. */
+export async function downloadFile(path: string, filename: string) {
+  const res = await fetch(path, { headers: { authorization: `Bearer ${currentToken()}` } });
+  if (!res.ok) throw { status: res.status, code: 'ERROR', message: 'Download failed' } as ApiError;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(await res.blob());
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 export function eventsUrl(path: string) {
   return `${path}?access_token=${encodeURIComponent(currentToken() ?? '')}`;
 }
@@ -138,7 +149,7 @@ export interface Me {
   hackathons: { id: string; name: string; deadline: string; grace_seconds: number }[];
 }
 export interface Stats {
-  hackathon: { id: string; name: string; deadline: string; graceSeconds: number };
+  hackathon: { id: string; name: string; deadline: string; graceSeconds: number; isDemo: boolean };
   serverTime: string;
   teams: number;
   teamsSubmitted: number;
@@ -150,6 +161,8 @@ export interface Stats {
   lateAttempts: number;
   versionsFailedChecks: number;
   failedByCheck: Record<string, number>;
-  jobs: { queued: number; running: number; done: number; dead: number; retried: number };
+  jobs: { queued: number; running: number; done: number; dead: number; retried: number; fencedOut: number };
+  receiptsEmailed: number;
+  chaosArmed: boolean;
   perMinute: { minute: string; n: number }[];
 }

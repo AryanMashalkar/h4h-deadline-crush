@@ -464,6 +464,34 @@ export async function versionLink(pool: pg.Pool, storage: Storage, actor: Actor,
   return { url: await storage.signDownload(key, name, config.downloadUrlTtlSeconds), expiresIn: config.downloadUrlTtlSeconds };
 }
 
+/** Builds the queued receipt email as an RFC 5322 message (CRLF line endings). */
+export async function receiptEmail(pool: pg.Pool, actor: Actor, versionId: string): Promise<string> {
+  const { rows } = await pool.query(
+    `SELECT v.team_id, e.to_addresses, e.subject, e.body, e.created_at, e.idempotency_key
+       FROM versions v LEFT JOIN email_outbox e ON e.version_id = v.id WHERE v.id = $1`,
+    [versionId],
+  );
+  if (!rows[0]) throw notFound('Version');
+  await teamFor(pool, actor, rows[0].team_id, 'read');
+  if (!rows[0].body) throw notFound('Receipt email');
+  const e = rows[0];
+  // Header values come from our own data, but strip CR/LF anyway (header injection).
+  const h = (v: string) => v.replace(/[\r\n]+/g, ' ');
+  return [
+    `From: ${h(config.mail.from)}`,
+    `To: ${h(e.to_addresses.join(', '))}`,
+    `Subject: ${h(e.subject)}`,
+    `Date: ${new Date(e.created_at).toUTCString().replace('GMT', '+0000')}`,
+    `Message-ID: <${h(e.idempotency_key)}@deadline-crush>`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    e.body,
+    '',
+  ].join('\r\n');
+}
+
 export async function requireOrganizer(pool: pg.Pool, actor: Actor, hackathonId: string) {
   const { rows } = await pool.query(
     "SELECT 1 FROM users WHERE id = $1 AND role = 'organizer' AND (organizer_of IS NULL OR organizer_of = $2)",

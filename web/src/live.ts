@@ -6,7 +6,7 @@ export interface LiveEvent {
   [k: string]: unknown;
 }
 
-const TYPES = ['upload.started', 'upload.completed', 'upload.aborted', 'version.created', 'version.checked', 'late.attempt'];
+const TYPES = ['upload.started', 'upload.completed', 'upload.aborted', 'version.created', 'version.checked', 'late.attempt', 'job.fault', 'job.fenced'];
 
 /**
  * Subscribes to a server-sent event stream. EventSource reconnects by itself;

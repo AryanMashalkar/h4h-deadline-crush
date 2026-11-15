@@ -60,7 +60,7 @@ async function assertExactlyOnce(versionIds: string[]) {
     expect(r.job_status).toBe('done');
     expect(r.status).toBe('accepted');
     expect(r.attempts_that_wrote).toBe(1); // all results come from one single attempt
-    expect(r.results).toBe(3); // integrity, file_type, preview
+    expect(r.results).toBe(4); // integrity, file_type, malware, preview
     expect(r.receipts).toBe(1);
   }
   return rows;

@@ -244,6 +244,14 @@ export async function buildApp({ pool, hub, storage, limits: overrides }: AppDep
     });
     r.get('/api/versions/:id/download', async (req) => S.versionLink(pool, storage, me(req), idParam(req), 'file'));
     r.get('/api/versions/:id/preview', async (req) => S.versionLink(pool, storage, me(req), idParam(req), 'preview'));
+    // The emailed receipt, exactly as queued in the outbox, as an RFC 5322 message.
+    r.get('/api/versions/:id/receipt.eml', async (req, reply) => {
+      const eml = await S.receiptEmail(pool, me(req), idParam(req));
+      return reply
+        .type('message/rfc822')
+        .header('content-disposition', `attachment; filename="receipt-${idParam(req)}.eml"`)
+        .send(eml);
+    });
 
     r.get('/api/teams/:id/events', async (req, reply) => {
       const team = await S.teamFor(pool, me(req), idParam(req), 'read');
@@ -278,6 +286,15 @@ export async function buildApp({ pool, hub, storage, limits: overrides }: AppDep
       );
       if (!rows[0]) throw notFound('Hackathon');
       return rows[0];
+    });
+    // Demo-only fault injection: the next check job freezes mid-job, loses its
+    // lease, a second attempt takes over, and the frozen one's late write is
+    // refused by the lease fence.
+    r.post('/api/hackathons/:id/chaos', async (req) => {
+      await S.requireOrganizer(pool, me(req), idParam(req));
+      const { rows } = await pool.query('UPDATE hackathons SET chaos_pending = true WHERE id = $1 AND is_demo RETURNING id', [idParam(req)]);
+      if (!rows[0]) throw new AppError(403, 'FORBIDDEN', 'Fault injection is only available on demo hackathons');
+      return { armed: true };
     });
     r.get('/api/hackathons/:id/events', async (req, reply) => {
       await S.requireOrganizer(pool, me(req), idParam(req));

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
-import { del, get, post, type ApiError, type Submission, type Version } from '../api';
+import { del, downloadFile, get, post, type ApiError, type Submission, type Version } from '../api';
 import { bytes, CHECK_LABEL, clock, STATUS_LABEL, when, whenMs } from '../format';
 import { useLive, useServerClock } from '../live';
 import { prehash, Upload, type PartState, type Progress } from '../upload';
-import { disguisedPdf, samplePdf, zipBomb } from '../testkit';
+import { disguisedPdf, eicarPdf, samplePdf, zipBomb } from '../testkit';
 
 export function TeamPage() {
   const { id } = useParams<{ id: string }>();
@@ -257,6 +257,9 @@ function SubmitForm({ sub, now, deadline, onDone }: { sub: Submission; now: numb
         <button type="button" className="chip" disabled={busy} onClick={() => loadSample(async () => disguisedPdf(), 'Disguised file test')}>
           Program renamed to .pdf
         </button>
+        <button type="button" className="chip" disabled={busy} onClick={() => loadSample(async () => eicarPdf(), 'Virus scan test')}>
+          EICAR virus test file
+        </button>
       </div>
 
       {progress && <UploadProgress p={progress} onPause={() => upload.current?.pause()} onResume={() => upload.current && runUpload(upload.current)} />}
@@ -427,7 +430,10 @@ function VersionCard({ v, counted }: { v: Version; counted: boolean }) {
       )}
       {v.sha256 && v.status === 'accepted' && (
         <p className="small receipt">
-          Receipt · SHA-256 <span className="mono hash">{v.sha256}</span>
+          Receipt · SHA-256 <span className="mono hash">{v.sha256}</span> ·{' '}
+          <button className="link" onClick={() => downloadFile(`/api/versions/${v.id}/receipt.eml`, `receipt-v${v.versionNo}.eml`).catch(() => {})}>
+            ✉ View emailed receipt (.eml)
+          </button>
         </p>
       )}
       {v.checks.length > 0 && (
@@ -438,6 +444,12 @@ function VersionCard({ v, counted }: { v: Version; counted: boolean }) {
               {CHECK_LABEL[c.name] ?? c.name}
               {c.name === 'file_type' && <span className="muted"> · {String(c.detail.detected)}</span>}
               {c.name === 'archive' && !c.ok && <span className="muted"> · {String(c.detail.error)}</span>}
+              {c.name === 'malware' && !c.ok && (
+                <span className="muted">
+                  {' · '}
+                  {(c.detail.findings as { where: string; what: string }[]).map((f) => `${f.what} (${f.where})`).join(', ')}
+                </span>
+              )}
               {c.name === 'links' && (
                 <ul className="small">
                   {(c.detail.links as { url: string; ok: boolean; status?: number; error?: string }[]).map((l) => (

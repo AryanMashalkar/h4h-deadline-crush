@@ -3,7 +3,7 @@ import { notFound } from '../errors.js';
 
 export async function hackathonStats(pool: pg.Pool, hackathonId: string) {
   const { rows } = await pool.query(
-    `SELECT h.id, h.name, h.deadline, h.grace_seconds, clock_timestamp() AS server_time,
+    `SELECT h.id, h.name, h.deadline, h.grace_seconds, h.is_demo, clock_timestamp() AS server_time,
        (SELECT count(*)::int FROM teams t WHERE t.hackathon_id = h.id) AS teams,
        (SELECT count(*)::int FROM counted_versions c WHERE c.hackathon_id = h.id) AS teams_submitted,
        (SELECT count(*)::int FROM counted_versions c WHERE c.hackathon_id = h.id AND c.status = 'accepted') AS accepted,
@@ -16,6 +16,8 @@ export async function hackathonStats(pool: pg.Pool, hackathonId: string) {
        (SELECT count(*)::int FROM late_attempts l WHERE l.hackathon_id = h.id) AS late_attempts,
        (SELECT count(DISTINCT c.version_id)::int FROM check_results c JOIN versions v ON v.id = c.version_id
          WHERE v.hackathon_id = h.id AND NOT c.ok) AS versions_failed_checks,
+       (SELECT count(*)::int FROM email_outbox e JOIN versions v ON v.id = e.version_id WHERE v.hackathon_id = h.id) AS receipts_emailed,
+       h.chaos_pending,
        (SELECT json_object_agg(check_name, n) FROM (
           SELECT c.check_name, count(*)::int AS n FROM check_results c JOIN versions v ON v.id = c.version_id
            WHERE v.hackathon_id = h.id AND NOT c.ok GROUP BY c.check_name) f) AS failed_by_check,
@@ -24,7 +26,8 @@ export async function hackathonStats(pool: pg.Pool, hackathonId: string) {
           'running', count(*) FILTER (WHERE j.status = 'running'),
           'done', count(*) FILTER (WHERE j.status = 'done'),
           'dead', count(*) FILTER (WHERE j.status = 'dead'),
-          'retried', count(*) FILTER (WHERE j.attempts > 1))
+          'retried', count(*) FILTER (WHERE j.attempts > 1),
+          'fencedOut', COALESCE(sum(j.fenced_out), 0)::int)
           FROM jobs j JOIN versions v ON v.id = j.version_id WHERE v.hackathon_id = h.id) AS jobs,
        (SELECT COALESCE(json_agg(json_build_object('minute', m, 'n', n) ORDER BY m), '[]') FROM (
           SELECT date_trunc('minute', v.created_at) AS m, count(*)::int AS n FROM versions v
@@ -36,7 +39,7 @@ export async function hackathonStats(pool: pg.Pool, hackathonId: string) {
   if (!rows[0]) throw notFound('Hackathon');
   const r = rows[0];
   return {
-    hackathon: { id: r.id, name: r.name, deadline: r.deadline.toISOString(), graceSeconds: r.grace_seconds },
+    hackathon: { id: r.id, name: r.name, deadline: r.deadline.toISOString(), graceSeconds: r.grace_seconds, isDemo: r.is_demo },
     serverTime: r.server_time.toISOString(),
     teams: r.teams,
     teamsSubmitted: r.teams_submitted,
@@ -49,6 +52,8 @@ export async function hackathonStats(pool: pg.Pool, hackathonId: string) {
     versionsFailedChecks: r.versions_failed_checks,
     failedByCheck: r.failed_by_check ?? {},
     jobs: r.jobs,
+    receiptsEmailed: r.receipts_emailed,
+    chaosArmed: r.chaos_pending,
     perMinute: r.per_minute,
   };
 }

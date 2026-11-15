@@ -52,6 +52,13 @@ export const config = {
     allowPrivateLinks: bool('ALLOW_PRIVATE_LINKS', false),
   },
 
+  // Emailed receipts: unset = receipts stay in the outbox (and as .eml downloads).
+  mail: {
+    resendApiKey: process.env.RESEND_API_KEY ?? '',
+    resendUrl: process.env.RESEND_API_URL ?? 'https://api.resend.com/emails',
+    from: process.env.MAIL_FROM ?? 'Deadline Crush <receipts@deadline-crush.invalid>',
+  },
+
   rateGlobalPerIp: int('RATE_GLOBAL_PER_IP', 1200),
   rateAuthPerIp: int('RATE_AUTH_PER_IP', 30),
   webDist: process.env.WEB_DIST ?? '',

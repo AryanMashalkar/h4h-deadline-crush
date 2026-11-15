@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { currentToken, get, patch, type ApiError, type Stats } from '../api';
+import { downloadFile, get, patch, post, type ApiError, type Stats } from '../api';
 import { clock, when } from '../format';
 import { useLive, useServerClock } from '../live';
 
@@ -24,6 +24,7 @@ export function OrganizerPage() {
   const [flash, setFlash] = useState<Record<string, number>>({});
   const prev = useRef<Stats | null>(null);
   const timer = useRef<number>();
+  const [chaosNote, setChaosNote] = useState('');
   const [recon, setRecon] = useState<Recon | 'running' | { error: string } | null>(null);
 
   async function verify() {
@@ -47,6 +48,7 @@ export function OrganizerPage() {
             ['late', p.lateAttempts, next.lateAttempts],
             ['failed', p.versionsFailedChecks, next.versionsFailedChecks],
             ['uploads', p.uploadsInProgress, next.uploadsInProgress],
+            ['jobs', p.jobs.retried + p.jobs.fencedOut, next.jobs.retried + next.jobs.fencedOut],
           ];
           for (const [k, a, b] of pairs) if (a !== b) changed[k] = Date.now();
           setFlash((f) => ({ ...f, ...changed }));
@@ -85,13 +87,17 @@ export function OrganizerPage() {
   const maxPerMin = Math.max(1, ...s.perMinute.map((m) => m.n));
 
   async function exportCsv() {
-    const res = await fetch(`/api/hackathons/${id}/export.csv`, { headers: { authorization: `Bearer ${currentToken()}` } });
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `submissions-${s!.hackathon.name.replace(/\W+/g, '-')}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    await downloadFile(`/api/hackathons/${id}/export.csv`, `submissions-${s!.hackathon.name.replace(/\W+/g, '-')}.csv`);
+  }
+
+  async function armChaos() {
+    try {
+      await post(`/api/hackathons/${id}/chaos`);
+      setChaosNote('Armed. Upload a file as the team: its check will freeze and lose its lease.');
+    } catch (e) {
+      setChaosNote((e as ApiError).message);
+    }
+    load();
   }
 
   async function moveDeadline(minutesFromNow: number) {
@@ -143,7 +149,8 @@ export function OrganizerPage() {
         {tile('failed', 'Failed checks', s.versionsFailedChecks, Object.entries(s.failedByCheck).map(([k, v]) => `${k} ${v}`).join(' · ') || 'none', s.versionsFailedChecks ? 'warn' : '')}
         {tile('late', 'Late attempts', s.lateAttempts, 'refused by the server clock', s.lateAttempts ? 'bad' : '')}
         {tile('uploads', 'Uploads in progress', s.uploadsInProgress, `${s.graceVersions} finished in grace`)}
-        {tile('jobs', 'Jobs retried', s.jobs.retried, `${s.jobs.dead} gave up`)}
+        {tile('jobs', 'Jobs retried', s.jobs.retried, `${s.jobs.fencedOut} stale ${s.jobs.fencedOut === 1 ? "write" : "writes"} fenced out · ${s.jobs.dead} gave up`, s.jobs.fencedOut ? 'good' : '')}
+        {tile('emails', 'Receipts emailed', s.receiptsEmailed, 'queued in the outbox with the receipt')}
         <div className={`tile ${recon && typeof recon === 'object' && 'ok' in recon ? (recon.ok ? 'good' : 'bad') : ''}`} aria-live="polite">
           <span className="tile-label">Nothing lost?</span>
           {recon === null && <span className="tile-note">Check every stored file against the database.</span>}
@@ -193,6 +200,25 @@ export function OrganizerPage() {
         </button>
         <span className="muted small">One row per team with the version that counts, its checks and SHA-256.</span>
       </div>
+
+      {s.hackathon.isDemo && (
+      <section className="card chaos" aria-labelledby="chaos-h">
+        <h2 id="chaos-h">Fault injection (demo)</h2>
+        <p className="small muted">
+          The next check job freezes mid-check with no heartbeat, so its 30 s lease runs out. A second attempt takes over and
+          finishes; when the frozen one wakes and tries to write, the lease fence refuses it. Watch Jobs retried and the
+          fenced-out count, then check that the team still has exactly one result.
+        </p>
+        <div className="row">
+          <button className="btn danger" onClick={armChaos} disabled={s.chaosArmed}>
+            💥 Simulate worker crash mid-check
+          </button>
+          <span className="small" role="status">
+            {s.chaosArmed ? 'Armed: waiting for the next upload…' : chaosNote}
+          </span>
+        </div>
+      </section>
+      )}
 
       <details className="card">
         <summary>Move the deadline (demo)</summary>
