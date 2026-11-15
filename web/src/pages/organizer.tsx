@@ -4,6 +4,19 @@ import { currentToken, get, patch, type ApiError, type Stats } from '../api';
 import { clock, when } from '../format';
 import { useLive, useServerClock } from '../live';
 
+interface Recon {
+  ok: boolean;
+  checkedAt: string;
+  versionsWithFile: number;
+  distinctObjects: number;
+  objectsFound: number;
+  missing: unknown[];
+  sizeMismatch: unknown[];
+  completedUploadsWithoutVersion: number;
+  versionsWithoutJob: number;
+  unfinishedJobs: number;
+}
+
 export function OrganizerPage() {
   const { id } = useParams<{ id: string }>();
   const [s, setS] = useState<Stats | null>(null);
@@ -11,6 +24,16 @@ export function OrganizerPage() {
   const [flash, setFlash] = useState<Record<string, number>>({});
   const prev = useRef<Stats | null>(null);
   const timer = useRef<number>();
+  const [recon, setRecon] = useState<Recon | 'running' | { error: string } | null>(null);
+
+  async function verify() {
+    setRecon('running');
+    try {
+      setRecon(await get<Recon>(`/api/hackathons/${id}/reconcile`));
+    } catch (err) {
+      setRecon({ error: (err as ApiError).message ?? 'Check failed' });
+    }
+  }
 
   const load = useCallback(() => {
     get<Stats>(`/api/hackathons/${id}/stats`)
@@ -121,6 +144,26 @@ export function OrganizerPage() {
         {tile('late', 'Late attempts', s.lateAttempts, 'refused by the server clock', s.lateAttempts ? 'bad' : '')}
         {tile('uploads', 'Uploads in progress', s.uploadsInProgress, `${s.graceVersions} finished in grace`)}
         {tile('jobs', 'Jobs retried', s.jobs.retried, `${s.jobs.dead} gave up`)}
+        <div className={`tile ${recon && typeof recon === 'object' && 'ok' in recon ? (recon.ok ? 'good' : 'bad') : ''}`} aria-live="polite">
+          <span className="tile-label">Nothing lost?</span>
+          {recon === null && <span className="tile-note">Check every stored file against the database.</span>}
+          {recon === 'running' && <span className="tile-note">Checking the bucket…</span>}
+          {recon && typeof recon === 'object' && 'error' in recon && <span className="tile-note">{recon.error}</span>}
+          {recon && typeof recon === 'object' && 'ok' in recon && (
+            <>
+              <span className="tile-value">
+                {recon.ok ? '✓' : '✗'} {recon.objectsFound}/{recon.distinctObjects}
+              </span>
+              <span className="tile-note">
+                files found in the bucket · {recon.missing.length} missing · {recon.sizeMismatch.length} size mismatches ·{' '}
+                {recon.completedUploadsWithoutVersion} uploads without a version · {recon.versionsWithoutJob} versions without a check
+              </span>
+            </>
+          )}
+          <button type="button" className="chip" onClick={verify} disabled={recon === 'running'}>
+            {recon && recon !== 'running' ? 'Run again' : 'Verify now'}
+          </button>
+        </div>
       </section>
 
       <section className="card" aria-labelledby="pm-h">

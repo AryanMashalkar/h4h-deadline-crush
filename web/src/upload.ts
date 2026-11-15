@@ -29,7 +29,11 @@ export interface Progress {
   session?: UploadSession;
   version?: Version;
   resumed?: boolean;
+  /** One entry per 10 MiB part: kept = already in storage when this run started (resume). */
+  parts?: PartState[];
 }
+
+export type PartState = 'todo' | 'sending' | 'done' | 'kept';
 
 interface Saved {
   clientKey: string;
@@ -173,9 +177,14 @@ export class Upload {
       ).catch(() => ({ status: 'open', parts: [] }));
       for (const p of listed.parts) this.etags[p.partNumber] ??= p.etag;
       const resumed = Object.keys(this.etags).length > 0;
+      const kept = new Set(Object.keys(this.etags).map(Number));
+      const view = (): PartState[] =>
+        Array.from({ length: session.partCount }, (_, i) =>
+          this.etags[i + 1] ? (kept.has(i + 1) ? 'kept' : 'done') : this.inflight.has(i + 1) ? 'sending' : 'todo',
+        );
       const partBytes = (n: number) => Math.min(session.partSize, this.file.size - (n - 1) * session.partSize);
       const doneBytes = () => Object.keys(this.etags).reduce((s, n) => s + partBytes(Number(n)), 0);
-      this.emit({ phase: 'uploading', session, partCount: session.partCount, partsDone: Object.keys(this.etags).length, sent: doneBytes(), resumed });
+      this.emit({ phase: 'uploading', session, partCount: session.partCount, partsDone: Object.keys(this.etags).length, sent: doneBytes(), resumed, parts: view() });
 
       const todo = Array.from({ length: session.partCount }, (_, i) => i + 1).filter((n) => !this.etags[n]);
       const urls = new Map<number, { url: string; until: number }>();
@@ -203,15 +212,16 @@ export class Upload {
               const blob = this.file.slice((n - 1) * session.partSize, (n - 1) * session.partSize + partBytes(n));
               const etag = await putPart(url, blob, signal, (b) => {
                 this.inflight.set(n, b);
-                this.emit({ sent: doneBytes() + [...this.inflight.values()].reduce((a, c) => a + c, 0) });
+                this.emit({ sent: doneBytes() + [...this.inflight.values()].reduce((a, c) => a + c, 0), parts: view() });
               });
               this.inflight.delete(n);
               this.etags[n] = etag;
               save(this.storeKey, { clientKey: this.clientKey!, sessionId: session.id, etags: this.etags });
-              this.emit({ partsDone: Object.keys(this.etags).length, sent: doneBytes() + [...this.inflight.values()].reduce((a, c) => a + c, 0) });
+              this.emit({ partsDone: Object.keys(this.etags).length, sent: doneBytes() + [...this.inflight.values()].reduce((a, c) => a + c, 0), parts: view() });
               break;
             } catch (err) {
               this.inflight.delete(n);
+              this.emit({ parts: view() });
               if ((err as Error).name === 'AbortError') throw err;
               const apiErr = err as ApiError;
               if (apiErr.code === 'DEADLINE_PASSED' || apiErr.code === 'UPLOAD_NOT_OPEN') throw err;
@@ -232,7 +242,7 @@ export class Upload {
         .sort((a, b) => a.partNumber - b.partNumber);
       const version = await request<Version>('POST', `/api/teams/${this.teamId}/uploads/${session.id}/complete`, { parts });
       save(this.storeKey, null);
-      this.emit({ phase: 'done', version, sent: this.file.size, partsDone: session.partCount });
+      this.emit({ phase: 'done', version, sent: this.file.size, partsDone: session.partCount, parts: view() });
       return version;
     } catch (err) {
       if ((err as Error).name === 'AbortError') return undefined;

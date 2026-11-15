@@ -3,7 +3,8 @@ import { useParams } from 'react-router-dom';
 import { del, get, post, type ApiError, type Submission, type Version } from '../api';
 import { bytes, CHECK_LABEL, clock, STATUS_LABEL, when, whenMs } from '../format';
 import { useLive, useServerClock } from '../live';
-import { prehash, Upload, type Progress } from '../upload';
+import { prehash, Upload, type PartState, type Progress } from '../upload';
+import { disguisedPdf, samplePdf, zipBomb } from '../testkit';
 
 export function TeamPage() {
   const { id } = useParams<{ id: string }>();
@@ -156,6 +157,17 @@ function SubmitForm({ sub, now, deadline, onDone }: { sub: Submission; now: numb
     prehash(f, setHashed).catch(() => setHashed(-1));
   }
 
+  async function loadSample(make: () => Promise<File>, sampleTitle: string) {
+    try {
+      const f = await make();
+      if (!title.trim()) setTitle(sampleTitle);
+      if (!links.trim()) setLinks('https://github.com/AryanMashalkar/h4h-deadline-crush');
+      pick(f);
+    } catch (err) {
+      setMessage({ kind: 'error', text: (err as Error).message });
+    }
+  }
+
   async function runUpload(u: Upload) {
     upload.current = u;
     setBusy(true);
@@ -226,9 +238,25 @@ function SubmitForm({ sub, now, deadline, onDone }: { sub: Submission; now: numb
               ? `${bytes(file.size)} · ${hashed < 0 ? 'fingerprint failed, it will retry on upload' : hashed < 1 ? `fingerprinting ${Math.round(hashed * 100)}%` : 'fingerprint ready (SHA-256)'}`
               : `PDF, ZIP, PNG, JPEG, MP4 or WebM, up to ${bytes(sub.maxFileBytes)}. Drop it here or choose.`}
           </span>
-          <input ref={fileInput} type="file" onChange={(e) => pick(e.target.files?.[0])} disabled={busy} />
+          <input ref={fileInput} className="sr-only" type="file" onChange={(e) => pick(e.target.files?.[0])} disabled={busy} />
+          <span className="pick-btn" aria-hidden="true">
+            ↑ {file ? 'Choose another file' : 'Choose a file'}
+          </span>
         </label>
         {!file && latest?.file && <p className="muted small">Leave empty to keep {latest.file.name}.</p>}
+      </div>
+
+      <div className="testkit" role="group" aria-label="Judge test kit">
+        <span className="muted small">Judge test kit, one click:</span>
+        <button type="button" className="chip" disabled={busy} onClick={() => loadSample(async () => samplePdf(), 'Sample project')}>
+          Valid 45 MB PDF (5 parts)
+        </button>
+        <button type="button" className="chip" disabled={busy} onClick={() => loadSample(zipBomb, 'Zip bomb test')}>
+          1029:1 zip bomb
+        </button>
+        <button type="button" className="chip" disabled={busy} onClick={() => loadSample(async () => disguisedPdf(), 'Disguised file test')}>
+          Program renamed to .pdf
+        </button>
       </div>
 
       {progress && <UploadProgress p={progress} onPause={() => upload.current?.pause()} onResume={() => upload.current && runUpload(upload.current)} />}
@@ -263,6 +291,21 @@ function SubmitForm({ sub, now, deadline, onDone }: { sub: Submission; now: numb
   );
 }
 
+const partLabel: Record<PartState, string> = { todo: 'waiting', sending: 'sending', done: 'stored', kept: 'stored before the drop, not sent again' };
+
+function PartGrid({ parts }: { parts: PartState[] }) {
+  return (
+    <ol className="parts" aria-label="10 MiB parts">
+      {parts.map((st, i) => (
+        <li key={i} className={`part part-${st}`} title={`Part ${i + 1}: ${partLabel[st]}`}>
+          <span className="mono">{i + 1}</span>
+          {st === 'done' || st === 'kept' ? ' ✓' : ''}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function UploadProgress({ p, onPause, onResume }: { p: Progress; onPause: () => void; onResume: () => void }) {
   const pct = p.phase === 'hashing' ? p.hashed : p.total ? p.sent / p.total : 0;
   const label =
@@ -271,11 +314,11 @@ function UploadProgress({ p, onPause, onResume }: { p: Progress; onPause: () => 
       : p.phase === 'starting'
         ? 'Starting upload'
         : p.phase === 'uploading'
-          ? `Uploading part ${Math.min(p.partsDone + 1, p.partCount)} of ${p.partCount}${p.resumed ? ' (resumed)' : ''}`
+          ? `Uploading ${p.partCount} parts straight to storage${p.resumed ? ' (resumed: stored parts are skipped)' : ''}`
           : p.phase === 'offline'
             ? 'Offline: will continue when you reconnect'
             : p.phase === 'paused'
-              ? 'Paused'
+              ? 'Connection dropped'
               : p.phase === 'finishing'
                 ? 'Finishing'
                 : p.phase === 'done'
@@ -290,18 +333,20 @@ function UploadProgress({ p, onPause, onResume }: { p: Progress; onPause: () => 
       <div className="bar" role="progressbar" aria-valuenow={Math.round(pct * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
         <span style={{ width: `${pct * 100}%` }} />
       </div>
+      {p.parts && p.parts.length > 0 && <PartGrid parts={p.parts} />}
       <div className="progress-top small muted">
         <span>
           {bytes(p.sent)} of {bytes(p.total)}
+          {p.phase === 'paused' && p.parts ? ` · ${p.parts.filter((x) => x === 'done' || x === 'kept').length} of ${p.parts.length} parts already safe in storage` : ''}
         </span>
         {(p.phase === 'uploading' || p.phase === 'offline') && (
-          <button type="button" className="link" onClick={onPause}>
-            Pause
+          <button type="button" className="chip" onClick={onPause}>
+            ⚡ Simulate network drop
           </button>
         )}
         {(p.phase === 'paused' || p.phase === 'failed') && (
-          <button type="button" className="link" onClick={onResume}>
-            Resume
+          <button type="button" className="chip strong" onClick={onResume}>
+            ▶ Resume{p.parts && p.parts.some((x) => x === 'done' || x === 'kept') ? ` from part ${p.parts.findIndex((x) => x !== 'done' && x !== 'kept') + 1}` : ''}
           </button>
         )}
       </div>
