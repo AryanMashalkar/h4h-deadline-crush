@@ -1,0 +1,15 @@
+# Keeps the free Render instance warm so a judge's first visit doesn't wait ~50 s
+# for a cold start. GitHub may delay scheduled runs by a few minutes; an external
+# uptime monitor on /api/health is the more reliable option.
+name: keep-alive
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+permissions: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: curl -fsS --retry 3 --retry-delay 20 --max-time 90 https://deadline-crush.onrender.com/api/health
